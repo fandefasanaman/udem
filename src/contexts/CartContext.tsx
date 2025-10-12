@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
-import { Formation } from '../lib/supabase';
+import { Formation } from '../lib/firebase';
 
 interface CartContextType {
   cart: Formation[];

@@ -1,11 +1,17 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { supabase, Profile } from '../lib/supabase';
-import type { User, Session } from '@supabase/supabase-js';
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut as firebaseSignOut,
+  onAuthStateChanged,
+  User
+} from 'firebase/auth';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { auth, db, Profile } from '../lib/firebase';
 
 interface AuthContextType {
   user: User | null;
   profile: Profile | null;
-  session: Session | null;
   loading: boolean;
   signUp: (email: string, password: string, name: string, phone: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
@@ -18,48 +24,30 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        loadProfile(session.user.id);
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setUser(user);
+      if (user) {
+        await loadProfile(user.uid);
       } else {
+        setProfile(null);
         setLoading(false);
       }
     });
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      (async () => {
-        setSession(session);
-        setUser(session?.user ?? null);
-        if (session?.user) {
-          await loadProfile(session.user.id);
-        } else {
-          setProfile(null);
-          setLoading(false);
-        }
-      })();
-    });
-
-    return () => subscription.unsubscribe();
+    return () => unsubscribe();
   }, []);
 
   const loadProfile = async (userId: string) => {
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
+      const docRef = doc(db, 'profiles', userId);
+      const docSnap = await getDoc(docRef);
 
-      if (error) throw error;
-      setProfile(data);
+      if (docSnap.exists()) {
+        setProfile(docSnap.data() as Profile);
+      }
     } catch (error) {
       console.error('Error loading profile:', error);
     } finally {
@@ -68,38 +56,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signUp = async (email: string, password: string, name: string, phone: string) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const user = userCredential.user;
 
-    if (error) throw error;
+    const profileData: Profile = {
+      id: user.uid,
+      name,
+      phone,
+      address: '',
+      role: 'client',
+      created_at: new Date().toISOString(),
+      last_login: new Date().toISOString(),
+    };
 
-    if (data.user) {
-      const { error: profileError } = await supabase.from('profiles').insert({
-        id: data.user.id,
-        name,
-        phone,
-        address: '',
-        role: 'client',
-      });
-
-      if (profileError) throw profileError;
-    }
+    await setDoc(doc(db, 'profiles', user.uid), profileData);
   };
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    await signInWithEmailAndPassword(auth, email, password);
 
-    if (error) throw error;
+    if (auth.currentUser) {
+      const docRef = doc(db, 'profiles', auth.currentUser.uid);
+      await setDoc(docRef, { last_login: new Date().toISOString() }, { merge: true });
+    }
   };
 
   const signOut = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
+    await firebaseSignOut(auth);
   };
 
   const isAdmin = profile?.role === 'admin';
@@ -107,7 +90,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = {
     user,
     profile,
-    session,
     loading,
     signUp,
     signIn,

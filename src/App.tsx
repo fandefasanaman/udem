@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { CartProvider } from './contexts/CartContext';
-import { supabase } from './lib/supabase';
+import { db } from './lib/firebase';
+import { collection, getDocs, query, where, orderBy, updateDoc, doc } from 'firebase/firestore';
 
 function AppContent() {
   const { user, profile, loading, signIn, signUp, signOut, isAdmin } = useAuth();
@@ -42,11 +43,15 @@ function HomePage() {
   const [formations, setFormations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useState(() => {
-    supabase.from('formations').select('*').eq('status', 'active').then(({ data }) => {
-      setFormations(data || []);
+  useEffect(() => {
+    const fetchFormations = async () => {
+      const q = query(collection(db, 'formations'), where('status', '==', 'active'));
+      const snapshot = await getDocs(q);
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setFormations(data);
       setLoading(false);
-    });
+    };
+    fetchFormations();
   }, []);
 
   if (loading) return <div>Chargement des formations...</div>;
@@ -202,13 +207,21 @@ function OrdersPage() {
   const [loading, setLoading] = useState(true);
   const { user } = useAuth();
 
-  useState(() => {
-    if (user) {
-      supabase.from('orders').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).then(({ data }) => {
-        setOrders(data || []);
+  useEffect(() => {
+    const fetchOrders = async () => {
+      if (user) {
+        const q = query(
+          collection(db, 'orders'),
+          where('user_id', '==', user.uid),
+          orderBy('created_at', 'desc')
+        );
+        const snapshot = await getDocs(q);
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setOrders(data);
         setLoading(false);
-      });
-    }
+      }
+    };
+    fetchOrders();
   }, [user]);
 
   if (loading) return <div>Chargement des commandes...</div>;
@@ -245,15 +258,27 @@ function AdminPage() {
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useState(() => {
-    supabase.from('orders').select('*').eq('status', 'pending').order('created_at', { ascending: false }).then(({ data }) => {
-      setOrders(data || []);
+  useEffect(() => {
+    const fetchOrders = async () => {
+      const q = query(
+        collection(db, 'orders'),
+        where('status', '==', 'pending'),
+        orderBy('created_at', 'desc')
+      );
+      const snapshot = await getDocs(q);
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setOrders(data);
       setLoading(false);
-    });
+    };
+    fetchOrders();
   }, []);
 
   const handleValidate = async (orderId: string) => {
-    await supabase.from('orders').update({ status: 'validated', validated_at: new Date().toISOString() }).eq('id', orderId);
+    const orderRef = doc(db, 'orders', orderId);
+    await updateDoc(orderRef, {
+      status: 'validated',
+      validated_at: new Date().toISOString()
+    });
     setOrders(orders.filter(o => o.id !== orderId));
   };
 
